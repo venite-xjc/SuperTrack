@@ -1,6 +1,7 @@
 import numpy as np
 import re
 from transforms3d.euler import euler2mat, mat2euler
+from scipy.spatial.transform import Rotation
 
 # reference: https://github.com/20tab/bvh-python
 
@@ -147,9 +148,13 @@ class Bvh:
                 raise Exception(f"Unknown channel {channel}")
 
             M_channel = euler2mat(*euler_rot)
+
+            r = Rotation.from_matrix(M_channel)
+
+            quat = r.as_quat()
             M_rotation = M_rotation.dot(M_channel)
 
-        return M_rotation, index_offset
+        return M_rotation, index_offset, quat
 
     def _extract_position(self, joint, frame_pose, index_offset):
         offset_position = np.zeros(3)
@@ -168,7 +173,7 @@ class Bvh:
 
         return offset_position, index_offset
 
-    def _recursive_apply_frame(self, joint, frame_pose, index_offset, p, r, M_parent, p_parent):
+    def _recursive_apply_frame(self, joint, frame_pose, index_offset, p, r, m, M_parent, p_parent):
         if joint.position_animated():
             offset_position, index_offset = self._extract_position(joint, frame_pose, index_offset)
         else:
@@ -181,7 +186,7 @@ class Bvh:
             return index_offset
 
         if joint.rotation_animated():
-            M_rotation, index_offset = self._extract_rotation(frame_pose, index_offset, joint)
+            M_rotation, index_offset, local_rotation = self._extract_rotation(frame_pose, index_offset, joint)
         else:
             M_rotation = np.eye(3)
 
@@ -192,31 +197,42 @@ class Bvh:
         joint_index = list(self.joints.values()).index(joint)
         p[joint_index] = position
         r[joint_index] = rotation
+        m[joint_index] = local_rotation
 
         for c in joint.children:
-            index_offset = self._recursive_apply_frame(c, frame_pose, index_offset, p, r, M, position)
+            index_offset = self._recursive_apply_frame(c, frame_pose, index_offset, p, r, m, M, position)
 
         return index_offset
 
     def frame_pose(self, frame):
         p = np.empty((len(self.joints), 3))
         r = np.empty((len(self.joints), 3))
+        m = np.empty((len(self.joints), 4))
+
         frame_pose = self.keyframes[frame]
         M_parent = np.zeros((3, 3))
         M_parent[0, 0] = 1
         M_parent[1, 1] = 1
         M_parent[2, 2] = 1
-        self._recursive_apply_frame(self.root, frame_pose, 0, p, r, M_parent, np.zeros(3))
+        self._recursive_apply_frame(self.root, frame_pose, 0, p, r, m, M_parent, np.zeros(3))
 
-        return p, r
+        return p, r, m
 
     def all_frame_poses(self):
         p = np.empty((self.frames, len(self.joints), 3))
         r = np.empty((self.frames, len(self.joints), 3))
+        m = np.empty((self.frames, len(self.joints), 4))
 
         for frame in range(len(self.keyframes)):
-            p[frame], r[frame] = self.frame_pose(frame)
+            p[frame], r[frame], m[frame] = self.frame_pose(frame)
         print("finish process...")
+        self.world_space_p = p #position in world space of each joint in each frame
+        self.world_space_r = r #rotation in world space, represented in Eular angles
+        self.local_space_r = m #rotation in local space, represented in Eular angles
+        self.world_space_vp = np.zeros_like(self.world_space_p)
+        self.world_space_vp[:-1, :, :] = np.diff(p, axis = 0) #velocirues in world space
+        self.world_space_vp[-1, :, :] = self.world_space_vp[-2, :, :]
+        print(self.world_space_vp)
         return p, r
 
     def _plot_pose(self, p, r, fig=None, ax=None):
@@ -263,7 +279,7 @@ class Bvh:
         fig = plt.figure()
         ax = p3.Axes3D(fig)     
 
-        p, r = self.all_frame_poses()
+        p, r= self.all_frame_poses()
         x_range = [np.min(p[:, :, 0]), np.max(p[:, :, 0])]
         y_range = [np.min(p[:, :, 1]), np.max(p[:, :, 1])]
         z_range = [np.min(p[:, :, 2]), np.max(p[:, :, 2])]
@@ -307,18 +323,12 @@ if __name__ == '__main__':
     anim.plot_hierarchy()
 
     # extract single frame pose: axis0=joint, axis1=positionXYZ/rotationXYZ
-    p, r = anim.frame_pose(0)
+    p, r, lr = anim.frame_pose(0)
 
     # extract all poses: axis0=frame, axis1=joint, axis2=positionXYZ/rotationXYZ
     all_p, all_r = anim.all_frame_poses()
 
-    # print all joints, their positions and orientations
-    for _p, _r, _j in zip(p, r, anim.joint_names()):
-        print(f"{_j}: p={_p}, r={_r}")
-
-    # draw the skeleton for the given frame
-    # anim.plot_frame(9)
-
+   
     # show full animation
     # anim.plot_all_frames()
     anim.animation_all_frames()

@@ -47,4 +47,7 @@ class SuperTrack:
             a = self.world(state_tmp)
             state_tmp = self.update_state(state_tmp, a)
             state_pred.append(state_tmp)
+
+        loss = None
+        loss.backward()
             
