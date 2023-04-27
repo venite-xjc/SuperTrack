@@ -1,9 +1,12 @@
+
+# reference: https://github.com/20tab/bvh-python
+
 import numpy as np
 import re
 from transforms3d.euler import euler2mat, mat2euler
-from scipy.spatial.transform import Rotation
+from transforms3d.axangles import axangle2mat, mat2axangle
+from transforms3d.quaternions import mat2quat, quat2mat
 
-# reference: https://github.com/20tab/bvh-python
 
 class BvhJoint:
     def __init__(self, name, parent):
@@ -33,6 +36,7 @@ class Bvh:
         self.keyframes = None
         self.frames = 0
         self.fps = 0
+        self.world_space_p = None
 
     def _parse_hierarchy(self, text):
         lines = re.split('\\s*\\n+\\s*', text)
@@ -149,12 +153,9 @@ class Bvh:
 
             M_channel = euler2mat(*euler_rot)
 
-            r = Rotation.from_matrix(M_channel)
-
-            quat = r.as_quat()
             M_rotation = M_rotation.dot(M_channel)
 
-        return M_rotation, index_offset, quat
+        return M_rotation, index_offset
 
     def _extract_position(self, joint, frame_pose, index_offset):
         offset_position = np.zeros(3)
@@ -173,7 +174,7 @@ class Bvh:
 
         return offset_position, index_offset
 
-    def _recursive_apply_frame(self, joint, frame_pose, index_offset, p, r, m, M_parent, p_parent):
+    def _recursive_apply_frame(self, joint, frame_pose, index_offset, p, r, lr, M_parent, p_parent):
         if joint.position_animated():
             offset_position, index_offset = self._extract_position(joint, frame_pose, index_offset)
         else:
@@ -182,94 +183,128 @@ class Bvh:
         if len(joint.channels) == 0:
             joint_index = list(self.joints.values()).index(joint)
             p[joint_index] = p_parent + M_parent.dot(joint.offset)
-            r[joint_index] = mat2euler(M_parent)
+            # r[joint_index] = np.rad2deg(mat2euler(M_parent))
+            r[joint_index] = mat2quat(M_parent)
             return index_offset
 
         if joint.rotation_animated():
-            M_rotation, index_offset, local_rotation = self._extract_rotation(frame_pose, index_offset, joint)
+            M_rotation, index_offset = self._extract_rotation(frame_pose, index_offset, joint)
         else:
             M_rotation = np.eye(3)
 
         M = M_parent.dot(M_rotation)
         position = p_parent + M_parent.dot(joint.offset) + offset_position
 
-        rotation = np.rad2deg(mat2euler(M))
+        # rotation = np.rad2deg(mat2euler(M))
+        rotation = mat2quat(M)
+        # local_rotation = np.rad2deg(mat2euler(M_rotation))
+        local_rotation = mat2quat(M_rotation)
         joint_index = list(self.joints.values()).index(joint)
         p[joint_index] = position
         r[joint_index] = rotation
-        m[joint_index] = local_rotation
+        lr[joint_index] = local_rotation
 
         for c in joint.children:
-            index_offset = self._recursive_apply_frame(c, frame_pose, index_offset, p, r, m, M, position)
+            index_offset = self._recursive_apply_frame(c, frame_pose, index_offset, p, r, lr, M, position)
 
         return index_offset
 
     def frame_pose(self, frame):
         p = np.empty((len(self.joints), 3))
-        r = np.empty((len(self.joints), 3))
-        m = np.empty((len(self.joints), 4))
+        r = np.empty((len(self.joints), 4))
+        lr = np.empty((len(self.joints), 4))
 
         frame_pose = self.keyframes[frame]
         M_parent = np.zeros((3, 3))
         M_parent[0, 0] = 1
         M_parent[1, 1] = 1
         M_parent[2, 2] = 1
-        self._recursive_apply_frame(self.root, frame_pose, 0, p, r, m, M_parent, np.zeros(3))
+        self._recursive_apply_frame(self.root, frame_pose, 0, p, r, lr, M_parent, np.zeros(3))
 
-        return p, r, m
+        return p, r, lr
 
     def all_frame_poses(self):
         p = np.empty((self.frames, len(self.joints), 3))
-        r = np.empty((self.frames, len(self.joints), 3))
-        m = np.empty((self.frames, len(self.joints), 4))
+        r = np.empty((self.frames, len(self.joints), 4))
+        lr = np.empty((self.frames, len(self.joints), 4))
 
         for frame in range(len(self.keyframes)):
-            p[frame], r[frame], m[frame] = self.frame_pose(frame)
-        print("finish process...")
-        self.world_space_p = p #position in world space of each joint in each frame
-        self.world_space_r = r #rotation in world space, represented in Eular angles
-        self.local_space_r = m #rotation in local space, represented in Eular angles
-        self.world_space_vp = np.zeros_like(self.world_space_p)
-        self.world_space_vp[:-1, :, :] = np.diff(p, axis = 0) #velocirues in world space
+            p[frame], r[frame], lr[frame] = self.frame_pose(frame)
+
+        self.world_space_p = p #position in world space of each body in each frame
+
+        self.world_space_vp = np.empty((self.frames, len(self.joints), 3))#velocities in world space
+        self.world_space_vp[:-1, :, :] = np.diff(p, axis = 0) 
+        self.world_space_vp = self.world_space_vp/(1/self.frames)
         self.world_space_vp[-1, :, :] = self.world_space_vp[-2, :, :]
-        print(self.world_space_vp)
-        return p, r
 
-    def _plot_pose(self, p, r, fig=None, ax=None):
-        import matplotlib.pyplot as plt
-        from mpl_toolkits.mplot3d import axes3d, Axes3D
-        if fig is None:
-            fig = plt.figure()
-        if ax is None:
-            ax = fig.add_subplot(111, projection='3d')
+        self.world_space_r = r #rotation in world space, represented in quaternion
 
-        ax.cla()
-        ax.scatter(p[:, 0], p[:, 2], p[:, 1])
-        ax.set_xlabel('X Label')
-        ax.set_ylabel('Y Label')
-        ax.set_zlabel('Z Label')
+        self.world_space_vr = np.empty((self.frames, len(self.joints), 3))#rotational in world space, represented in axis-angle
+        for frame in range(self.world_space_vr.shape[0]-1):
+            for body in range(self.world_space_vr.shape[1]):
+                quat1 = self.world_space_r[frame, body, :] # [4]
+                matrix1 = quat2mat(quat1)
+                quat2 = self.world_space_r[frame+1, body, :] # [4]
+                matrix2 = quat2mat(quat2)
+                dmatrix = matrix2@matrix1.T
+                axis, angle = mat2axangle(dmatrix)
+                self.world_space_vr[frame, body, :] = axis*angle/(1/self.frames)
+        self.world_space_vr[-1, :, :] = self.world_space_vr[-2, :, :]
 
-        plt.draw()
-        plt.pause(0.001)
+        self.pd_r = lr #rotation of joints, represented in quaternion
 
-    def plot_frame(self, frame, fig=None, ax=None):
-        p, r = self.frame_pose(frame)
-        self._plot_pose(p, r, fig, ax)
+        self.pd_vr = np.empty((self.frames, len(self.joints), 3))#rotational in local space, represented in axis-angle
+        for frame in range(self.pd_vr.shape[0]-1):
+            for body in range(self.pd_vr.shape[1]):
+                quat1 = self.pd_r[frame, body, :] # [4]
+                matrix1 = quat2mat(quat1)
+                quat2 = self.pd_r[frame+1, body, :] # [4]
+                matrix2 = quat2mat(quat2)
+                dmatrix = matrix2@matrix1.T
+                axis, angle = mat2axangle(dmatrix)
+                self.pd_vr[frame, body, :] = axis*angle/(1/self.frames)
+        self.pd_vr[-1, :, :] = self.pd_vr[-2, :, :]
+
+
+
+
+
+    # def _plot_pose(self, p, r, fig=None, ax=None):
+    #     import matplotlib.pyplot as plt
+    #     from mpl_toolkits.mplot3d import axes3d, Axes3D
+    #     if fig is None:
+    #         fig = plt.figure()
+    #     if ax is None:
+    #         ax = fig.add_subplot(111, projection='3d')
+
+    #     ax.cla()
+    #     ax.scatter(p[:, 0], p[:, 2], p[:, 1])
+    #     ax.set_xlabel('X Label')
+    #     ax.set_ylabel('Y Label')
+    #     ax.set_zlabel('Z Label')
+
+    #     plt.draw()
+    #     plt.pause(0.001)
+
+    # def plot_frame(self, frame, fig=None, ax=None):
+    #     p, r = self.frame_pose(frame)
+    #     self._plot_pose(p, r, fig, ax)
 
     def joint_names(self):
-        return self.joints.keys()
+        return list(self.joints.keys())
 
     def parse_file(self, path):
         with open(path, 'r') as f:
             self.parse_string(f.read())
 
-    def plot_all_frames(self):
-        import matplotlib.pyplot as plt
-        from mpl_toolkits.mplot3d import axes3d, Axes3D
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
-        for i in range(self.frames):
-            self.plot_frame(i, fig, ax)
+    # def plot_all_frames(self):
+    #     import matplotlib.pyplot as plt
+    #     from mpl_toolkits.mplot3d import axes3d, Axes3D
+    #     fig = plt.figure()
+    #     ax = fig.add_subplot(111, projection='3d')
+    #     for i in range(self.frames):
+    #         self.plot_frame(i, fig, ax)
     
     def animation_all_frames(self):
         import matplotlib.pyplot as plt
@@ -279,7 +314,9 @@ class Bvh:
         fig = plt.figure()
         ax = p3.Axes3D(fig)     
 
-        p, r= self.all_frame_poses()
+        if (self.world_space_p == None).any():
+            self.all_frame_poses()
+        p = self.world_space_p
         x_range = [np.min(p[:, :, 0]), np.max(p[:, :, 0])]
         y_range = [np.min(p[:, :, 1]), np.max(p[:, :, 1])]
         z_range = [np.min(p[:, :, 2]), np.max(p[:, :, 2])]
@@ -318,17 +355,13 @@ if __name__ == '__main__':
     anim = Bvh()
     # parser file
     anim.parse_file("./BVH/jumps1_subject5.bvh")
+    print(anim.joint_names())
 
-    # draw the skeleton in T-pose
-    anim.plot_hierarchy()
+    # # draw the skeleton in T-pose
+    # anim.plot_hierarchy()
 
-    # extract single frame pose: axis0=joint, axis1=positionXYZ/rotationXYZ
-    p, r, lr = anim.frame_pose(0)
 
     # extract all poses: axis0=frame, axis1=joint, axis2=positionXYZ/rotationXYZ
-    all_p, all_r = anim.all_frame_poses()
+    anim.all_frame_poses()
 
-   
-    # show full animation
-    # anim.plot_all_frames()
     anim.animation_all_frames()
