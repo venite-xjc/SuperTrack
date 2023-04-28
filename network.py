@@ -45,10 +45,12 @@ class SuperTrack:
 
     def local(self, pos, vel, rot, ang):
         '''
+        convert world space input into local space
+
         pos:[B, body, 3] position in world space
         vel:[B, body, 3] velocity in world space
-        rot:[B, body, 4] rotation in world space
-        ang:[B, body, 3] rotational velocity in world space
+        rot:[B, body, 4] rotation in world space, quaternion
+        ang:[B, body, 3] rotational velocity in world space, axis-angle
         '''
         
         BS, B, _ = pos.shape
@@ -67,56 +69,66 @@ class SuperTrack:
                 lvel[i, j, :] = inv @ (vel[i, j, :])
                 lrot[i, j, :] = (inv @ quat2mat(rot[i, j, :]))[:, :2].reshape(6)
                 lang[i, j, :] = inv @ ang[i, j, :]
-                height[i, :] = pos[i, j, 1]
+                height[i, :] = pos[i, j, 1] #y axis is upforward
                 lup = inv @ torch.tensor([0, 1, 0])
         
         return lpos, lvel, lrot, lang, height, lup
     
     
 
-    def train_world(self, pos, vel, rot, ang):
+    def forward(self, pos, vel, rot, ang, j_rot, j_ang):
         '''
-        all_params: [B, frames+1, body/joint, dim]
+        pos: [B, frames+1, bodies, 3]
+        vel: [B, frames+1, bodies, 3]
+        rot: [B, frames+1, bodies, 4] quatenion
+        ang: [B, frames+1, bodies, 3] axis-angle
+        j_rot: [B, frames+1 joints, 4] quatenion
+        j_ang: [B, frames+1, joints, 3] axis_angle
         '''
 
-        self.world.train()
-        self.policy.eval() # not update policy
-        for param in self.policy.parameters():
-            param.requires_grad =False
+        # self.world.train()
+        # self.policy.eval() # not update policy
+        # for param in self.policy.parameters():
+        #     param.requires_grad =False
 
-        #initial state
+        #initial state, S0<-P0
         s_pos = pos[:, 0, :, :] # [B, body, dim]
         s_vel = vel[:, 0, :, :]
         s_rot = rot[:, 0, :, :]
         s_ang = ang[:, 0, :, :]
 
         for i in range(self.world_window):
-            local_position_a, local_rotation_a = self.policy(self.local(s_pos, s_vel, s_rot, s_ang), self.local(pos[:, i+1, :, :], vel[:, i+1, :, :], rot[:, i+1, :, :], ang[:, i+1, :, :]))
-            world_position_a = torch.zeros_like(local_position_a)
-            world_rotation_a = torch.zeros_like(local_rotation_a)
-            for i in range(local_position_a.shape[0]):
+            #produce o:[B, j, 3] represented as axis-angle
+            o = self.policy(self.local(s_pos, s_vel, s_rot, s_ang), self.local(pos[:, i+1, :, :], vel[:, i+1, :, :], rot[:, i+1, :, :], ang[:, i+1, :, :]))
+            o = o+0.1*torch.randn_like(o) #add noise
+
+            # get PD target
+            T_rot = j_rot[:, i+1, :, :] #[B, joints, 4]
+            for i in range(T_rot.shape[0]):
+                for j in range(T_rot.shape[1]):
+                    T_rot[i, j, :] = mat2quat(axangle2mat(o[i, j, :]) @ quat2mat(T_rot[i, j, :]))
+            T_ang = j_ang[:, i+1, :, :]
+            
+            # get accelerations, both shapes are [B, bodies, 3]
+            position_acceleration, rotation_acceleration = self.world(self.local(s_pos, s_vel, s_rot, s_ang), T_rot, T_ang)
+
+            # turn accelerations into world space 
+            for i in range(position_acceleration.shape[0]):
                 rootr = s_rot[i, 0, :] #quat
                 rootr_matrix = quat2mat(rootr)
-                for j in local_position_a.shape[1]:
-                    world_position_a[i, j, :] = rootr_matrix @ local_position_a[i, j, :]
-                    world_rotation_a[i, j, :] = rootr_matrix @ local_rotation_a[i, j, :]
+                for j in position_acceleration.shape[1]:
+                    position_acceleration[i, j, :] = rootr_matrix @ position_acceleration[i, j, :]
+                    rotation_acceleration[i, j, :] = rootr_matrix @ rotation_acceleration[i, j, :]
 
             #update
-            s_vel = s_vel + self.dtime*world_position_a
-            s_ang = s_ang + self.dtime*world_rotation_a
+            s_vel = s_vel + self.dtime*position_acceleration
+            s_ang = s_ang + self.dtime*rotation_acceleration
             s_pos = s_vel + self.dtime*s_vel
             for i in range(s_rot.shape[0]):
                 for j in range(s_rot.shape[1]):
                     s_pos = mat2quat(axangle2mat(self.dtime*s_ang[i, j, :]) @ quat2mat(s_rot[i, j, :]))
 
 
-
-
-            
-
-
-        for param in self.policy.parameters():
-            param.requires_grad =True
             
     def train_world_loss(self, state_gt, state_pred):
         w_pos = w_vel = w_rot = w_ang = 1
@@ -125,15 +137,12 @@ class SuperTrack:
             if i == 0:
                 loss = w_pos*L1loss()
 
-    def train_policy(self):
-        pass
-
     def train_policy_loss(self):
         pass
 
     def train(self):
         for epoch in self.EPOCH:
-            for pos, vel, rot, ang, lpos, lvel, lrot, lang, height, lup in self.train_dataset:
+            for pos, vel, rot, ang, j_rot, j_ang in self.train_dataset:
                 self.train_world(pos, vel, rot, ang)
 
                 self.train_policy(pos, vel, rot, ang)
