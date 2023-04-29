@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
+from torch.utils.data import DataLoader
 from bvh import Bvh
 import numpy as np
 from transforms3d.euler import euler2mat, mat2euler
@@ -64,9 +65,20 @@ class BVHdataset(Dataset):
     def __getitem__(self, index):
         frames = np.array([index+i for i in range(self.window_size+1)]) #p0, p1, p2,..., pn
         
-        return self.world_space_p[frames, :, :], self.world_space_vp[frames, :, :], self.world_space_r[frames, :, :], self.world_space_vr[frames, :, :], self.pd_r, self.pd_vr[frames, :, :]
+        return torch.from_numpy(self.world_space_p[frames, :, :]), \
+                torch.from_numpy(self.world_space_vp[frames, :, :]), \
+                torch.from_numpy(self.world_space_r[frames, :, :]), \
+                torch.from_numpy(self.world_space_vr[frames, :, :]), \
+                torch.from_numpy(self.pd_r[frames, :, :]), \
+                torch.from_numpy(self.pd_vr[frames, :, :])
 
+
+    def get_loader(self, batch_size, num_worker = 4, shuffle = True):
+        loader = DataLoader(dataset = self, batch_size=batch_size, num_workers=num_worker, shuffle=shuffle)
+        return loader
 
 if __name__ == "__main__":
     a = BVHdataset()
-    
+    # print(a[0])
+    for i in a[0]:
+        print(i, i.shape)

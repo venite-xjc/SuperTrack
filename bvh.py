@@ -6,7 +6,8 @@ import re
 from transforms3d.euler import euler2mat, mat2euler
 from transforms3d.axangles import axangle2mat, mat2axangle
 from transforms3d.quaternions import mat2quat, quat2mat
-
+from tqdm import tqdm
+import pytorch3d.transforms as pyt
 
 class BvhJoint:
     def __init__(self, name, parent):
@@ -228,7 +229,7 @@ class Bvh:
         r = np.empty((self.frames, len(self.joints), 4))
         lr = np.empty((self.frames, len(self.joints), 4))
 
-        for frame in range(len(self.keyframes)):
+        for frame in tqdm(range(len(self.keyframes))):
             p[frame], r[frame], lr[frame] = self.frame_pose(frame)
 
         self.world_space_p = p #position in world space of each body in each frame
