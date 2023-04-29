@@ -63,3 +63,10 @@ mat = np.array([
 
 v = np.array([1, 2, 3])
 print(mat@v)
+
+def a():
+    return 1, 2, 3, 4, 5, 6, 7
+
+b = a()
+for i in b:
+    print(i)

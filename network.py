@@ -4,6 +4,7 @@ import torch.optim as optim
 from data import BVHdataset
 from transforms3d.quaternions import mat2quat, quat2mat
 from transforms3d.axangles import axangle2mat, mat2axangle
+from functools import lru_cache
 
 class Net(nn.Module):
     def __init__(self, input_size, output_size, hidden_layers = 5, hidden_units = 1024, act_layer = nn.ELU):
@@ -22,15 +23,69 @@ class Net(nn.Module):
         x = self.layers(x)
         return x
 
+class Policy_Model(nn.Module):
+    def __init__(self, input_size, output_size, hidden_layers = 5, hidden_units = 1024, act_layer = nn.ELU):
+        self.input_size = input_size
+
+        layers = []
+        layers+=[nn.Linear(input_size, hidden_units), act_layer()]
+        for i in range(hidden_layers-1):
+            layers+=[nn.Linear(hidden_units, hidden_units), act_layer()]
+        layers+=[nn.Linear(hidden_units, output_size)]
+
+        self.layers = nn.ModuleList(layers)
+
+    def forward(self, state1, state2):
+        B, _, _ = state1.shape
+        for i in state1:
+            i.reshape(B, -1)
+        for i in state2:
+            i.reshape(B, -1)
+
+        merge1 = torch.cat(state1, dim = -1)
+        merge2 = torch.cat(state2, dim = -1)
+        merge = torch.cat((merge1, merge2), dim = -1)
+
+        output = self.layers(merge)
+        return output
+
+class World_Model(nn.Module):
+    def __init__(self, input_size, output_size, hidden_layers = 5, hidden_units = 1024, act_layer = nn.ELU):
+        self.input_size = input_size
+
+        layers = []
+        layers+=[nn.Linear(input_size, hidden_units), act_layer()]
+        for i in range(hidden_layers-1):
+            layers+=[nn.Linear(hidden_units, hidden_units), act_layer()]
+        layers+=[nn.Linear(hidden_units, output_size)]
+
+        self.layers = nn.ModuleList(layers)
+
+    def forward(self, state, PD_target):
+        B, _, _ = state.shape
+        for i in state:
+            i.reshape(B, -1)
+        for i in PD_target:
+            i.reshape(B, -1)
+
+        merge1 = torch.cat(state, dim = -1)
+        merge2 = torch.cat(PD_target, dim = -1)
+        merge = torch.cat((merge1, merge2), dim = -1)
+
+        output = self.layers(merge)
+        return output
+
+
+
 class SuperTrack:
     def __init__(self):
-        self.world = Net(100, 100)
+        self.world = World_Model()
         self.world_batchsize = 2048
         self.world_lr = 0.001
         self.world_window = 8
         self.world_optimizer = optim.RAdam(self.world.parameters(), lr=self.world_lr)
 
-        self.policy = Net(100, 100)
+        self.policy = Policy_Model()
         self.policy_batchsize = 1024
         self.policy_lr = 0.0001
         self.policy_window = 32
@@ -43,6 +98,8 @@ class SuperTrack:
 
         self.dtime = 1/30
 
+    
+    @lru_cache
     def local(self, pos, vel, rot, ang):
         '''
         convert world space input into local space
@@ -76,7 +133,7 @@ class SuperTrack:
     
     
 
-    def forward(self, pos, vel, rot, ang, j_rot, j_ang):
+    def forward(self, pos, vel, rot, ang, j_rot, j_ang, type = 'world'):
         '''
         pos: [B, frames+1, bodies, 3]
         vel: [B, frames+1, bodies, 3]
@@ -84,6 +141,7 @@ class SuperTrack:
         ang: [B, frames+1, bodies, 3] axis-angle
         j_rot: [B, frames+1 joints, 4] quatenion
         j_ang: [B, frames+1, joints, 3] axis_angle
+        type: 'world'|'policy'
         '''
 
         # self.world.train()
@@ -97,10 +155,13 @@ class SuperTrack:
         s_rot = rot[:, 0, :, :]
         s_ang = ang[:, 0, :, :]
 
+        loss = 0
+
         for i in range(self.world_window):
             #produce o:[B, j, 3] represented as axis-angle
             o = self.policy(self.local(s_pos, s_vel, s_rot, s_ang), self.local(pos[:, i+1, :, :], vel[:, i+1, :, :], rot[:, i+1, :, :], ang[:, i+1, :, :]))
             o = o+0.1*torch.randn_like(o) #add noise
+            o = 120*o # times alpha
 
             # get PD target
             T_rot = j_rot[:, i+1, :, :] #[B, joints, 4]
@@ -128,14 +189,15 @@ class SuperTrack:
                 for j in range(s_rot.shape[1]):
                     s_pos = mat2quat(axangle2mat(self.dtime*s_ang[i, j, :]) @ quat2mat(s_rot[i, j, :]))
 
+            if type == 'world':
+                loss+=self.train_world_loss()
 
             
-    def train_world_loss(self, state_gt, state_pred):
-        w_pos = w_vel = w_rot = w_ang = 1
-        L1loss = torch.nn.L1Loss()
-        for i in range(len(state_pred)):
-            if i == 0:
-                loss = w_pos*L1loss()
+    def train_world_loss(self, pos1, pos2, vel1, vel2, rot1, rot2, ang1, ang2):
+        wpos = wvel = wrot = wang = 0.1
+        loss = torch.sum(torch.abs(pos1-pos2))
+        loss += torch.sum(torch.abs(vel1-vel2))
+        loss += torch.sum(torch.abs(ang1-ang2))
 
     def train_policy_loss(self):
         pass
@@ -147,3 +209,6 @@ class SuperTrack:
 
                 self.train_policy(pos, vel, rot, ang)
 
+
+if __name__  == "__main__":
+    
