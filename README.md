@@ -1,3 +1,4 @@
+## Info
 My impletation of pipeline of paper: [SuperTrack: Motion Tracking for Physically Simulated Characters using Supervised Learning](https://theorangeduck.com/media/uploads/other_stuff/SuperTrack.pdf)
 
 
@@ -5,7 +6,6 @@ I use LAFAN1 as my database which you can get from [LAFAN1](https://github.com/u
 
 
 ## Paramaters presentataions in this repo
----
 - world space positions $x^p\in \mathbb{R}^{3B}$
 - velocities $\dot{x}^p\in \mathbb{R}^{3B}$
 - accelerations $\ddot{x}^p\in \mathbb{R}^{3B}$
@@ -15,7 +15,6 @@ I use LAFAN1 as my database which you can get from [LAFAN1](https://github.com/u
 
 
 ## reference
----
 There is other information that may help you reproduce this paper from scratch.
 
 You can learn rotational velocities and rotational accelerations from Section 4.1 of [Orientation, Rotation, Velocity and Acceleration, and the SRM](https://www.sedris.org/wg8home/Documents/WG80485.pdf) and [Rigid Body Kinematics](https://ocw.mit.edu/courses/16-07-dynamics-fall-2009/419be4d742e628d70acfbc5496eab967_MIT16_07F09_Lec25.pdf).
