@@ -8,6 +8,7 @@ from transforms3d.axangles import axangle2mat, mat2axangle
 from transforms3d.quaternions import mat2quat, quat2mat
 from tqdm import tqdm
 import pytorch3d.transforms as pyt
+import torch
 
 class BvhJoint:
     def __init__(self, name, parent):
@@ -229,83 +230,46 @@ class Bvh:
         r = np.empty((self.frames, len(self.joints), 4))
         lr = np.empty((self.frames, len(self.joints), 4))
 
-        for frame in tqdm(range(len(self.keyframes))):
+        print("loading ", self.path, "...")
+        for frame in range(len(self.keyframes)):
             p[frame], r[frame], lr[frame] = self.frame_pose(frame)
 
-        self.world_space_p = p #position in world space of each body in each frame
+        self.world_space_p = torch.from_numpy(p) #position in world space of each body in each frame
 
         self.world_space_vp = np.empty((self.frames, len(self.joints), 3))#velocities in world space
         self.world_space_vp[:-1, :, :] = np.diff(p, axis = 0) 
-        self.world_space_vp = self.world_space_vp/(1/self.frames)
+        self.world_space_vp = self.world_space_vp/(1/self.fps)
         self.world_space_vp[-1, :, :] = self.world_space_vp[-2, :, :]
+        self.world_space_vp = torch.from_numpy(self.world_space_vp)
 
-        self.world_space_r = r #rotation in world space, represented in quaternion
+        self.world_space_r = torch.from_numpy(r) #rotation in world space, represented in quaternion  
 
-        self.world_space_vr = np.empty((self.frames, len(self.joints), 3))#rotational in world space, represented in axis-angle
-        for frame in range(self.world_space_vr.shape[0]-1):
-            for body in range(self.world_space_vr.shape[1]):
-                quat1 = self.world_space_r[frame, body, :] # [4]
-                matrix1 = quat2mat(quat1)
-                quat2 = self.world_space_r[frame+1, body, :] # [4]
-                matrix2 = quat2mat(quat2)
-                dmatrix = matrix2@matrix1.T
-                axis, angle = mat2axangle(dmatrix)
-                self.world_space_vr[frame, body, :] = axis*angle/(1/self.frames)
-        self.world_space_vr[-1, :, :] = self.world_space_vr[-2, :, :]
-
-        self.pd_r = lr #rotation of joints, represented in quaternion
-
-        self.pd_vr = np.empty((self.frames, len(self.joints), 3))#rotational in local space, represented in axis-angle
-        for frame in range(self.pd_vr.shape[0]-1):
-            for body in range(self.pd_vr.shape[1]):
-                quat1 = self.pd_r[frame, body, :] # [4]
-                matrix1 = quat2mat(quat1)
-                quat2 = self.pd_r[frame+1, body, :] # [4]
-                matrix2 = quat2mat(quat2)
-                dmatrix = matrix2@matrix1.T
-                axis, angle = mat2axangle(dmatrix)
-                self.pd_vr[frame, body, :] = axis*angle/(1/self.frames)
-        self.pd_vr[-1, :, :] = self.pd_vr[-2, :, :]
+        world_space_r1 = self.world_space_r[:-1, :, :]
+        world_space_r2 = self.world_space_r[1:, :, :]
+        matrix1 = pyt.quaternion_to_matrix(world_space_r1)
+        matrix2 = pyt.quaternion_to_matrix(world_space_r2)
+        dmatrix = torch.matmul(matrix2, torch.transpose(matrix1, -1, -2))/(1/self.fps)
+        self.world_space_vr = pyt.matrix_to_axis_angle(dmatrix)
+        self.world_space_vr = torch.cat((self.world_space_vr, self.world_space_vr[-1:, :, :]), dim = 0)
 
 
+        self.pd_r = torch.from_numpy(lr) #rotation of joints, represented in quaternion
+        r1 = self.pd_r[:-1, :, :]
+        r2 = self.pd_r[1:, :, :]
+        matrix1 = pyt.quaternion_to_matrix(r1)
+        matrix2 = pyt.quaternion_to_matrix(r2)
+        dmatrix = torch.matmul(matrix2, torch.transpose(matrix1, -1, -2))/(1/self.fps)
+        self.pd_vr = pyt.matrix_to_axis_angle(dmatrix)
+        self.pd_vr = torch.cat((self.pd_vr, self.pd_vr[-1:, :, :]), dim = 0)
 
-
-
-    # def _plot_pose(self, p, r, fig=None, ax=None):
-    #     import matplotlib.pyplot as plt
-    #     from mpl_toolkits.mplot3d import axes3d, Axes3D
-    #     if fig is None:
-    #         fig = plt.figure()
-    #     if ax is None:
-    #         ax = fig.add_subplot(111, projection='3d')
-
-    #     ax.cla()
-    #     ax.scatter(p[:, 0], p[:, 2], p[:, 1])
-    #     ax.set_xlabel('X Label')
-    #     ax.set_ylabel('Y Label')
-    #     ax.set_zlabel('Z Label')
-
-    #     plt.draw()
-    #     plt.pause(0.001)
-
-    # def plot_frame(self, frame, fig=None, ax=None):
-    #     p, r = self.frame_pose(frame)
-    #     self._plot_pose(p, r, fig, ax)
 
     def joint_names(self):
         return list(self.joints.keys())
 
     def parse_file(self, path):
+        self.path = path
         with open(path, 'r') as f:
             self.parse_string(f.read())
-
-    # def plot_all_frames(self):
-    #     import matplotlib.pyplot as plt
-    #     from mpl_toolkits.mplot3d import axes3d, Axes3D
-    #     fig = plt.figure()
-    #     ax = fig.add_subplot(111, projection='3d')
-    #     for i in range(self.frames):
-    #         self.plot_frame(i, fig, ax)
     
     def animation_all_frames(self):
         import matplotlib.pyplot as plt
