@@ -1,5 +1,5 @@
 ## Basic info
-My impletation of pipeline of paper: [SuperTrack: Motion Tracking for Physically Simulated Characters using Supervised Learning](https://theorangeduck.com/media/uploads/other_stuff/SuperTrack.pdf)
+My implementation of pipeline of paper: [SuperTrack: Motion Tracking for Physically Simulated Characters using Supervised Learning](https://theorangeduck.com/media/uploads/other_stuff/SuperTrack.pdf)
 
 
 I use LAFAN1 as my database which you can get from [LAFAN1](https://github.com/ubisoft/ubisoft-laforge-animation-dataset).
@@ -24,9 +24,10 @@ You can learn rotational velocities and rotational accelerations from Section 4.
 [On the Continuity of Rotation Representations in Neural Networks](https://arxiv.org/pdf/1812.07035.pdf) explains why convert quaternions into the two-axis rotation matrix format.
 
 ## Demo
-ground truth
+- ground truth
 ![](gt.gif)
-pred
+
+- pred
 ![](pred.gif)
 
 ---
