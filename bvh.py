@@ -279,13 +279,11 @@ class Bvh:
         fig = plt.figure()
         ax = p3.Axes3D(fig)     
 
-        if (self.world_space_p == None).any():
-            self.all_frame_poses()
-        p = self.world_space_p
+        p = self.world_space_p.numpy()
         x_range = [np.min(p[:, :, 0]), np.max(p[:, :, 0])]
         y_range = [np.min(p[:, :, 1]), np.max(p[:, :, 1])]
         z_range = [np.min(p[:, :, 2]), np.max(p[:, :, 2])]
-
+        print(x_range, y_range, z_range)
 
         pairs = [[list(self.joints.values()).index(j.parent), list(self.joints.values()).index(j)] \
                  for j in list(self.joints.values()) if j.parent!=None]
@@ -309,6 +307,42 @@ class Bvh:
         line_ani = animation.FuncAnimation(fig, update, self.frames-2, fargs=(p, pairs, lines),
                               interval=100, blit=False)
 
+        plt.show()
+
+    def animation(self):
+        import matplotlib.pyplot as plt
+        import mpl_toolkits.mplot3d.axes3d as p3
+        import matplotlib.animation as animation
+
+        fig = plt.figure()
+        ax = p3.Axes3D(fig)     
+
+        p = np.load('a.npy')
+        x_range = [np.min(p[:, :, 0]), np.max(p[:, :, 0])]
+        y_range = [np.min(p[:, :, 1]), np.max(p[:, :, 1])]
+        z_range = [np.min(p[:, :, 2]), np.max(p[:, :, 2])]
+        
+        pairs = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [0, 9], [9, 10], [10, 11], [11, 12], [12, 13], [11, 14], [14, 15], [15, 16], [16, 17], [11, 18], [18, 19], [19, 20], [20, 21]]
+
+        lines = [ax.plot(p[0, i, 0], p[0, i, 1], p[0, i, 2])[0] for i in pairs]
+
+        def update(n, p, pairs, lines):
+            for pair, line in zip(pairs, lines):
+                line.set_data(p[n, pair, 0:2].T)
+                line.set_3d_properties(p[n, pair, 2])
+            return lines
+        
+        ax.set_xlim3d(list(x_range))
+        ax.set_xlabel('X')
+        ax.set_ylim3d(list(y_range))
+        ax.set_ylabel('Y')
+        ax.set_zlim3d(list(z_range))
+        ax.set_zlabel('Z')
+
+        ax.set_title('BVH Animation')
+        line_ani = animation.FuncAnimation(fig, update, 98, fargs=(p, pairs, lines),
+                              interval=100, blit=False)
+        line_ani.save('output.gif',writer='imagemagick')
         plt.show()
 
     def __repr__(self):
