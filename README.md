@@ -23,5 +23,11 @@ You can learn rotational velocities and rotational accelerations from Section 4.
 
 [On the Continuity of Rotation Representations in Neural Networks](https://arxiv.org/pdf/1812.07035.pdf) explains why convert quaternions into the two-axis rotation matrix format.
 
+## Demo
+ground truth
+![](gt.gif)
+pred
+![](pred.gif)
+
 ---
 Due to my uncertainty regarding how to check my code, there may be some errors here. Please use with caution.
