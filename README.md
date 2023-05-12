@@ -1,5 +1,5 @@
 ## Basic info
-My implementation of pipeline of paper: [SuperTrack: Motion Tracking for Physically Simulated Characters using Supervised Learning](https://theorangeduck.com/media/uploads/other_stuff/SuperTrack.pdf)
+My code of pipeline of paper: [SuperTrack: Motion Tracking for Physically Simulated Characters using Supervised Learning](https://theorangeduck.com/media/uploads/other_stuff/SuperTrack.pdf)
 
 
 I use LAFAN1 as my database which you can get from [LAFAN1](https://github.com/ubisoft/ubisoft-laforge-animation-dataset).
